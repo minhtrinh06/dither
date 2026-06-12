@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import gsap from 'gsap';
 import { getStore, isLocalStore, type GalleryItem } from '../store';
 import { getPalette } from '../retro/palettes';
@@ -9,34 +9,106 @@ import { Lightbox } from './Lightbox';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
-/** Distance between consecutive artifacts along the camera axis, in px. */
-const SPACING = 240;
+/** Card slots circulating through the helix; each one is recycled forever. */
+const MAX_SLOTS = 12;
+/** Loop length must reach past the far fade (-2400px) so recycling happens unseen. */
+const LOOP_DEPTH = 2880;
+const MIN_SPACING = 240;
+/** Drift toward the viewer, px per second. */
+const DRIFT_SPEED = 80;
+/** A card is safely invisible this far behind the focus plane and may wrap. */
+const EXIT_DEPTH = 200;
 const CARD_WIDTHS = [252, 206, 282];
 
 const clamp = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
+function shuffled(n: number): number[] {
+  const a = Array.from({ length: n }, (_, i) => i);
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /**
- * The inside of the machine: artifacts hang in a slow helix around the
- * camera axis. Scroll, drag, or arrow keys travel the depth of the archive;
- * DOM-based 3D transforms keep every artifact a real, focusable element.
+ * The inside of the machine: artifacts drift toward you in a slow, endless
+ * helix. Slots that pass the camera rejoin the far end with a freshly drawn
+ * artifact (shuffled-deck random, so the stream never repeats its order).
+ * Hovering or focusing a card eases the drift to a hold; under
+ * prefers-reduced-motion the stream only moves on scroll/arrow keys.
  */
 export function Gallery() {
   const [items, setItems] = useState<GalleryItem[]>([]);
   const [state, setState] = useState<LoadState>('loading');
   const [selected, setSelected] = useState<GalleryItem | null>(null);
+  /** slotItems[j] = index into `items` currently shown by slot j. */
+  const [slotItems, setSlotItems] = useState<number[]>([]);
+  const [reduced] = useState(prefersReducedMotion);
 
   const rootRef = useRef<HTMLElement>(null);
-  const spaceRef = useRef<HTMLDivElement>(null);
   const motesRef = useRef<HTMLCanvasElement>(null);
-  const thumbRef = useRef<HTMLDivElement>(null);
   const cardsRef = useRef<(HTMLElement | null)[]>([]);
-  const positions = useRef<{ x: number; y: number; z: number; ry: number }[]>([]);
-  const cam = useRef({ cur: 0, target: 0, max: 0 });
+  /** Per-slot distance along the spiral path; 0 = focus plane, larger = deeper. */
+  const slotP = useRef<number[]>([]);
+  const spacingRef = useRef(MIN_SPACING);
+  const radiusRef = useRef(300);
+  const countRef = useRef(0);
+  const deck = useRef({ order: [] as number[], pos: 0, last: -1 });
+  /** Eased speed multiplier (0 while held, 1 adrift). */
+  const factorRef = useRef(0);
+  /** Entry surge: starts high so the archive rushes in, decays to 1. */
+  const boostRef = useRef(1);
+  const holdRef = useRef({ hover: false, focus: false, modal: false });
   const selectedRef = useRef<GalleryItem | null>(null);
 
   useEffect(() => {
     selectedRef.current = selected;
+    holdRef.current.modal = selected !== null;
   }, [selected]);
+
+  /* ---- Shuffled deck: every artifact appears before any repeats, never twice in a row ---- */
+
+  const drawItem = useCallback((count: number) => {
+    const d = deck.current;
+    if (d.pos >= d.order.length) {
+      d.order = shuffled(count);
+      d.pos = 0;
+      if (count > 1 && d.order[0] === d.last) {
+        const k = 1 + Math.floor(Math.random() * (count - 1));
+        [d.order[0], d.order[k]] = [d.order[k], d.order[0]];
+      }
+    }
+    d.last = d.order[d.pos++];
+    return d.last;
+  }, []);
+
+  /** Builds the circulating slot ring for a freshly loaded archive. */
+  const initSlots = useCallback(
+    (list: GalleryItem[]) => {
+      const n = list.length;
+      countRef.current = n;
+      if (n === 0) {
+        slotP.current = [];
+        setSlotItems([]);
+        return;
+      }
+      const slotCount = clamp(n * 2, 4, MAX_SLOTS);
+      const spacing = Math.max(MIN_SPACING, Math.round(LOOP_DEPTH / slotCount));
+      spacingRef.current = spacing;
+      deck.current = { order: [], pos: 0, last: -1 };
+      // Fixed per-slot jitter keeps the rhythm organic without drifting apart.
+      slotP.current = Array.from(
+        { length: slotCount },
+        (_, j) => j * spacing + (Math.random() - 0.5) * spacing * 0.3,
+      );
+      cardsRef.current.length = slotCount;
+      factorRef.current = 0;
+      boostRef.current = reduced ? 1 : 5;
+      setSlotItems(Array.from({ length: slotCount }, () => drawItem(n)));
+    },
+    [reduced, drawItem],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +118,7 @@ export function Gallery() {
         const list = await getStore().list();
         if (!cancelled) {
           setItems(list);
+          initSlots(list);
           setState('ready');
         }
       } catch (err) {
@@ -56,174 +129,167 @@ export function Gallery() {
     return () => {
       cancelled = true;
     };
+  }, [initSlots]);
+
+  /* ---- Imperative styling of every slot from its path position ---- */
+
+  const apply = useCallback(() => {
+    const ps = slotP.current;
+    const spacing = spacingRef.current;
+    const R = radiusRef.current;
+    for (let j = 0; j < ps.length; j++) {
+      const el = cardsRef.current[j];
+      if (!el) continue;
+      const p = ps[j];
+      const a = (p / spacing) * 1.05 + 0.7;
+      const x = Math.cos(a) * R * 1.45;
+      const y = Math.sin(a) * R * 0.6;
+      const ry = Math.cos(a) * -13;
+      const rel = -p; // 0 at the focus plane, positive once a card passes the camera
+      let o: number;
+      if (rel > 170) o = 0;
+      else if (rel > 30) o = 1 - (rel - 30) / 140;
+      else o = clamp(1 + rel / 2400, 0, 1);
+      el.style.transform = `translate(-50%, -50%) translate3d(${x.toFixed(1)}px, ${y.toFixed(
+        1,
+      )}px, ${(-p).toFixed(1)}px) rotateY(${ry.toFixed(1)}deg)`;
+      el.style.opacity = o.toFixed(3);
+      el.style.pointerEvents = o < 0.3 ? 'none' : '';
+    }
   }, []);
 
-  /* ---- Helix layout ---- */
-
-  const relayout = useCallback(() => {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const radius = clamp(Math.min(vw, vh) * 0.34, 150, 380);
-    positions.current = items.map((_, i) => {
-      const a = i * 1.05 + 0.7;
-      return {
-        x: Math.cos(a) * radius * 1.45,
-        y: Math.sin(a) * radius * 0.6,
-        z: -i * SPACING,
-        ry: Math.cos(a) * -13,
-      };
-    });
-    cam.current.max = Math.max(0, items.length - 1) * SPACING;
-    cam.current.target = clamp(cam.current.target, 0, cam.current.max);
-    positions.current.forEach((p, i) => {
-      const el = cardsRef.current[i];
-      if (el) {
-        el.style.transform = `translate(-50%, -50%) translate3d(${p.x.toFixed(1)}px, ${p.y.toFixed(
-          1,
-        )}px, ${p.z}px) rotateY(${p.ry.toFixed(1)}deg)`;
+  /** Moves the whole stream by `dist` px, wrapping and re-rolling exhausted slots. */
+  const advance = useCallback(
+    (dist: number) => {
+      const ps = slotP.current;
+      if (ps.length === 0) return;
+      const loop = ps.length * spacingRef.current;
+      let recycled: number[] | null = null;
+      for (let j = 0; j < ps.length; j++) {
+        ps[j] -= dist;
+        if (ps[j] < -EXIT_DEPTH) {
+          ps[j] += loop;
+          (recycled ??= []).push(j);
+        } else if (ps[j] > loop - EXIT_DEPTH) {
+          ps[j] -= loop;
+          (recycled ??= []).push(j);
+        }
       }
-    });
-  }, [items]);
-
-  useLayoutEffect(() => {
-    relayout();
-    window.addEventListener('resize', relayout);
-    return () => window.removeEventListener('resize', relayout);
-  }, [relayout]);
-
-  /* ---- Entry: glide in from deep inside the tube ---- */
-
-  useEffect(() => {
-    if (state !== 'ready' || items.length === 0) return;
-    cam.current.target = 0;
-    cam.current.cur = prefersReducedMotion() ? 0 : -760;
-  }, [state, items.length]);
-
-  /* ---- Camera ticker: lerp toward target, fade by depth ---- */
-
-  useEffect(() => {
-    const space = spaceRef.current;
-    if (!space) return;
-    const reduced = prefersReducedMotion();
-
-    const apply = () => {
-      const c = cam.current;
-      space.style.transform = `translateZ(${c.cur.toFixed(2)}px)`;
-      const ps = positions.current;
-      for (let i = 0; i < ps.length; i++) {
-        const el = cardsRef.current[i];
-        if (!el) continue;
-        const rel = c.cur + ps[i].z; // 0 at focus depth, >0 once passed
-        let o: number;
-        if (rel > 170) o = 0;
-        else if (rel > 30) o = 1 - (rel - 30) / 140;
-        else o = clamp(1 + rel / 2400, 0.05, 1);
-        el.style.opacity = o.toFixed(3);
-        el.style.pointerEvents = o < 0.3 ? 'none' : '';
-      }
-      const thumb = thumbRef.current;
-      if (thumb) {
-        const p = c.max > 0 ? clamp(c.cur / c.max, 0, 1) : 0;
-        thumb.style.top = `${(p * 100).toFixed(2)}%`;
-        thumb.style.transform = `translateY(-${(p * 100).toFixed(2)}%)`;
-      }
-    };
-
-    const tick = (_time: number, deltaTime: number) => {
-      const c = cam.current;
-      const d = c.target - c.cur;
-      if (Math.abs(d) < 0.05) return;
-      c.cur += reduced ? d : d * Math.min(1, (deltaTime / 16.7) * 0.09);
       apply();
-    };
+      if (recycled) {
+        const wrapped = recycled;
+        setSlotItems((prev) => {
+          const next = [...prev];
+          for (const j of wrapped) next[j] = drawItem(countRef.current);
+          return next;
+        });
+      }
+    },
+    [apply, drawItem],
+  );
 
+  // Position freshly (re)rendered slots — also the only styling pass reduced motion gets.
+  useEffect(() => {
     apply();
+  }, [slotItems, apply]);
+
+  /* ---- The drift ---- */
+
+  useEffect(() => {
+    if (reduced) return;
+    const tick = (_time: number, deltaTime: number) => {
+      const dt = Math.min(deltaTime, 100) / 1000; // clamp tab-restore jumps
+      const hold = holdRef.current;
+      const target = hold.modal || hold.focus || hold.hover ? 0 : 1;
+      factorRef.current += (target - factorRef.current) * Math.min(1, dt * 6);
+      boostRef.current += (1 - boostRef.current) * Math.min(1, dt * 1.6);
+      const v = DRIFT_SPEED * factorRef.current * boostRef.current;
+      if (v > 0.5) advance(v * dt);
+    };
     gsap.ticker.add(tick);
     return () => gsap.ticker.remove(tick);
-  }, [items]);
+  }, [reduced, advance]);
 
-  /* ---- Travel input: wheel, drag, keyboard ---- */
+  /* ---- Reduced motion: the stream moves only on request ---- */
 
   useEffect(() => {
+    if (!reduced) return;
     const root = rootRef.current;
     if (!root) return;
-    const setTarget = (v: number) => {
-      const c = cam.current;
-      c.target = clamp(v, -60, c.max + 60);
-    };
-
     const onWheel = (e: WheelEvent) => {
       if (selectedRef.current) return;
       e.preventDefault();
-      setTarget(cam.current.target + e.deltaY * 1.15);
+      advance(e.deltaY);
     };
-
-    let drag: { y: number; t: number } | null = null;
-    let moved = false;
-    const onPointerDown = (e: PointerEvent) => {
-      if (selectedRef.current || e.button !== 0) return;
-      drag = { y: e.clientY, t: cam.current.target };
-      moved = false;
-    };
-    const onPointerMove = (e: PointerEvent) => {
-      if (!drag) return;
-      const dy = e.clientY - drag.y;
-      if (Math.abs(dy) > 8) moved = true;
-      if (moved) setTarget(drag.t - dy * 2.2);
-    };
-    const onPointerUp = () => {
-      drag = null;
-    };
-    const onClickCapture = (e: MouseEvent) => {
-      if (moved) {
-        e.preventDefault();
-        e.stopPropagation();
-        moved = false;
-      }
-    };
-
     const onKey = (e: KeyboardEvent) => {
       if (selectedRef.current || e.altKey || e.ctrlKey || e.metaKey) return;
-      const c = cam.current;
       if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === 'PageDown') {
-        setTarget(c.target + SPACING);
+        advance(spacingRef.current);
       } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'PageUp') {
-        setTarget(c.target - SPACING);
-      } else if (e.key === 'Home') {
-        setTarget(0);
-      } else if (e.key === 'End') {
-        setTarget(c.max);
+        advance(-spacingRef.current);
       } else {
         return;
       }
       e.preventDefault();
     };
+    root.addEventListener('wheel', onWheel, { passive: false });
+    window.addEventListener('keydown', onKey);
+    return () => {
+      root.removeEventListener('wheel', onWheel);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [reduced, advance]);
 
+  /* ---- Hold-to-inspect: pointer or keyboard focus on a card stills the stream ---- */
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+    const hold = holdRef.current;
+    const isCard = (t: EventTarget | null) =>
+      t instanceof Element && t.closest('.card-btn') !== null;
+    const onOver = (e: PointerEvent) => {
+      if (e.pointerType === 'mouse' && isCard(e.target)) hold.hover = true;
+    };
+    const onOut = (e: PointerEvent) => {
+      if (hold.hover && !isCard(e.relatedTarget)) hold.hover = false;
+    };
+    const onFocusIn = (e: FocusEvent) => {
+      if (isCard(e.target)) hold.focus = true;
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      if (!isCard(e.relatedTarget)) hold.focus = false;
+    };
     // Focus or transforms must never scroll the fixed stage out of place.
     const onScroll = () => {
       root.scrollTop = 0;
       root.scrollLeft = 0;
     };
-
-    root.addEventListener('wheel', onWheel, { passive: false });
-    root.addEventListener('pointerdown', onPointerDown);
-    root.addEventListener('pointermove', onPointerMove);
-    root.addEventListener('pointerup', onPointerUp);
-    root.addEventListener('pointercancel', onPointerUp);
-    root.addEventListener('click', onClickCapture, true);
+    root.addEventListener('pointerover', onOver);
+    root.addEventListener('pointerout', onOut);
+    root.addEventListener('focusin', onFocusIn);
+    root.addEventListener('focusout', onFocusOut);
     root.addEventListener('scroll', onScroll);
-    window.addEventListener('keydown', onKey);
     return () => {
-      root.removeEventListener('wheel', onWheel);
-      root.removeEventListener('pointerdown', onPointerDown);
-      root.removeEventListener('pointermove', onPointerMove);
-      root.removeEventListener('pointerup', onPointerUp);
-      root.removeEventListener('pointercancel', onPointerUp);
-      root.removeEventListener('click', onClickCapture, true);
+      root.removeEventListener('pointerover', onOver);
+      root.removeEventListener('pointerout', onOut);
+      root.removeEventListener('focusin', onFocusIn);
+      root.removeEventListener('focusout', onFocusOut);
       root.removeEventListener('scroll', onScroll);
-      window.removeEventListener('keydown', onKey);
     };
   }, []);
+
+  /* ---- Spiral radius tracks the viewport ---- */
+
+  useEffect(() => {
+    const relayout = () => {
+      radiusRef.current = clamp(Math.min(window.innerWidth, window.innerHeight) * 0.34, 150, 380);
+      apply();
+    };
+    relayout();
+    window.addEventListener('resize', relayout);
+    return () => window.removeEventListener('resize', relayout);
+  }, [apply]);
 
   /* ---- Dust motes drifting inside the tube ---- */
 
@@ -251,7 +317,6 @@ export function Gallery() {
       vx: -(0.02 + Math.random() * 0.05),
       vy: -(0.03 + Math.random() * 0.09),
     }));
-    const reduced = prefersReducedMotion();
     const draw = () => {
       ctx.clearRect(0, 0, w, h);
       for (const m of motes) {
@@ -277,11 +342,7 @@ export function Gallery() {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', resize);
     };
-  }, []);
-
-  const travelTo = (i: number) => {
-    cam.current.target = clamp(i * SPACING, 0, cam.current.max);
-  };
+  }, [reduced]);
 
   return (
     <section className="archive" ref={rootRef} aria-label="DITHER archive">
@@ -340,22 +401,23 @@ export function Gallery() {
       )}
 
       <div className="space-cam">
-        <div className="space" ref={spaceRef}>
-          {items.map((item, i) => {
+        <div className="space">
+          {slotItems.map((itemIdx, j) => {
+            const item = items[itemIdx];
+            if (!item) return null;
             const paletteName = getPalette(item.paletteId).name;
             return (
               <figure
-                key={item.id}
+                key={j}
                 className="card"
                 ref={(el) => {
-                  cardsRef.current[i] = el;
+                  cardsRef.current[j] = el;
                 }}
-                style={{ width: `min(${CARD_WIDTHS[i % 3]}px, 56vw)` }}
+                style={{ width: `min(${CARD_WIDTHS[j % 3]}px, 56vw)` }}
               >
                 <button
                   className="card-btn"
                   onClick={() => setSelected(item)}
-                  onFocus={() => travelTo(i)}
                   aria-label={`Inspect artifact in ${paletteName}, ${formatDate(item.createdAt)}`}
                 >
                   <img src={item.imageUrl} alt={`Artifact in ${paletteName}`} loading="lazy" />
@@ -371,14 +433,13 @@ export function Gallery() {
       </div>
 
       {state === 'ready' && items.length > 0 && (
-        <>
-          <div className="hud-foot">
-            <span className="hud-hint">SCROLL · DRAG · ARROW KEYS TO TRAVEL — CLICK TO INSPECT</span>
-          </div>
-          <div className="hud-rail" aria-hidden="true">
-            <div className="hud-thumb" ref={thumbRef} />
-          </div>
-        </>
+        <div className="hud-foot">
+          <span className="hud-hint">
+            {reduced
+              ? 'SCROLL OR ARROW KEYS TO TRAVEL — CLICK TO INSPECT'
+              : 'THE ARCHIVE DRIFTS PAST — HOVER TO HOLD · CLICK TO INSPECT'}
+          </span>
+        </div>
       )}
 
       {selected && <Lightbox item={selected} onClose={() => setSelected(null)} />}

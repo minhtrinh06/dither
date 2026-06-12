@@ -78,7 +78,7 @@ export async function playGalleryToStudio(veil: HTMLElement): Promise<void> {
   const tl = gsap.timeline();
   tl.set(veil, { display: 'block', opacity: 0, background: VEIL_BG })
     .to(
-      '.archive-hud, .hud-foot, .hud-rail, .archive-motes',
+      '.archive-hud, .hud-foot, .archive-motes',
       { opacity: 0, duration: 0.3, ease: 'power1.out' },
       0,
     )

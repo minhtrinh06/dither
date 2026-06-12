@@ -10,12 +10,7 @@
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: none;
-  cursor: grab;
   background: radial-gradient(130% 100% at 50% 38%, #0a140d 0%, #050a07 56%, #030504 100%);
-}
-
-.archive:active {
-  cursor: grabbing;
 }
 
 .archive-motes {
@@ -202,30 +197,6 @@
   text-align: center;
 }
 
-.hud-rail {
-  position: absolute;
-  right: clamp(12px, 2.5vw, 28px);
-  top: 50%;
-  z-index: 30;
-  width: 3px;
-  height: 150px;
-  margin-top: -75px;
-  border-radius: 2px;
-  background: rgba(157, 245, 178, 0.16);
-  animation: hud-in 0.8s ease both 0.4s;
-}
-
-.hud-thumb {
-  position: absolute;
-  left: -1px;
-  right: -1px;
-  top: 0;
-  height: 28px;
-  border-radius: 3px;
-  background: var(--phos);
-  box-shadow: 0 0 9px var(--phos-glow);
-}
-
 /* ---- States (loading / error / empty) ---- */
 
 .archive-state {
@@ -356,8 +327,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .archive-hud,
-  .hud-foot,
-  .hud-rail {
+  .hud-foot {
     animation: none;
   }
 
