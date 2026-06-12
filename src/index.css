@@ -1,0 +1,10 @@
+/* ---------------------------------------------------------------------------
+   DITHER — visual system entry point.
+   base    → tokens, room chrome, shared elements
+   machine → the DT-1 terminal (studio)
+   gallery → inside the machine (archive)
+--------------------------------------------------------------------------- */
+
+@import './styles/base.css';
+@import './styles/machine.css';
+@import './styles/gallery.css';

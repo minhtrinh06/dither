@@ -1,0 +1,342 @@
+/* ---------------------------------------------------------------------------
+   DITHER — design system, base layer
+   A dark room, one warm machine. Instrument Serif for the voice,
+   IBM Plex Mono for the machinery, VT323 for everything phosphor.
+--------------------------------------------------------------------------- */
+
+:root {
+  /* The room */
+  --bg: #0a0c12;
+  --bg-deep: #06070c;
+  --line: #232838;
+  --line-bright: #39415a;
+  --ink: #dfe6dd;
+  --ink-dim: #8b93a3;
+  --ink-faint: #565e70;
+  --accent: #c9e4ca;
+  --error: #ff9c93;
+
+  /* Phosphor (screen + archive) */
+  --phos: #9df5b2;
+  --phos-dim: #5da571;
+  --phos-glow: rgba(120, 255, 160, 0.5);
+  --screen: #050a07;
+
+  /* Machine plastics */
+  --plastic-hi: #e7decc;
+  --plastic: #d3c9b4;
+  --plastic-lo: #b9ad94;
+  --plastic-edge: #7a6f58;
+  --engrave: #7d7158;
+  --engrave-dark: #5d543f;
+
+  /* Indicators */
+  --led-green: #46e57f;
+  --led-amber: #ffb13d;
+  --led-red: #ff5f56;
+
+  --font-display: 'Instrument Serif', georgia, serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-osd: 'VT323', 'IBM Plex Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+}
+
+html.is-zooming {
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  /* Faint ordered-dither field behind everything. */
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(73, 86, 122, 0.18), transparent),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='8'%3E%3Crect x='0' y='0' width='1' height='1' fill='%23ffffff' fill-opacity='0.025'/%3E%3Crect x='4' y='4' width='1' height='1' fill='%23ffffff' fill-opacity='0.018'/%3E%3Crect x='2' y='6' width='1' height='1' fill='%23ffffff' fill-opacity='0.012'/%3E%3C/svg%3E");
+}
+
+.app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 clamp(16px, 4vw, 48px);
+}
+
+/* Inside the machine the page chrome is gone; the archive owns the viewport. */
+.app-inside {
+  max-width: none;
+  padding: 0;
+}
+
+/* ---- Masthead ---- */
+
+.masthead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 22px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0.42em;
+}
+
+.wordmark-cursor {
+  width: 8px;
+  height: 15px;
+  margin-left: 2px;
+  background: var(--accent);
+  animation: cursor-blink 1.2s steps(2, jump-none) infinite;
+}
+
+@keyframes cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.nav {
+  display: flex;
+  gap: 4px;
+}
+
+.nav-link {
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  transition: color 0.2s, border-color 0.2s;
+}
+
+.nav-link:hover {
+  color: var(--ink);
+}
+
+.nav-link.active {
+  color: var(--accent);
+  border-color: var(--line-bright);
+}
+
+/* ---- Shared type ---- */
+
+.view {
+  flex: 1;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(34px, 5vw, 58px);
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.display em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.lede {
+  color: var(--ink-dim);
+  max-width: 58ch;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+/* ---- Buttons (room-side: modals, lightbox) ---- */
+
+.btn {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 11px 18px;
+  cursor: pointer;
+  border: 1px solid var(--line-bright);
+  background: transparent;
+  color: var(--ink);
+  text-decoration: none;
+  transition: background 0.2s, color 0.2s, border-color 0.2s, transform 0.1s;
+}
+
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-solid {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--bg);
+}
+
+.btn-solid:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+}
+
+.btn-solid:disabled {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+.btn-small {
+  padding: 7px 12px;
+  font-size: 11px;
+}
+
+/* ---- Modals ---- */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 7, 10, 0.88);
+  backdrop-filter: blur(3px);
+  animation: fade-in 0.25s ease both;
+  padding: 20px;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.modal {
+  width: min(560px, 100%);
+  border: 1px solid var(--line-bright);
+  background: #11141d;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-head .control-label,
+.modal .control-label {
+  font-size: 10px;
+  letter-spacing: 0.26em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.modal-message {
+  color: var(--ink-dim);
+  margin: 0;
+  font-size: 13px;
+}
+
+.camera-video {
+  width: 100%;
+  background: #000;
+  border: 1px solid var(--line);
+}
+
+.camera-shutter {
+  align-self: center;
+  min-width: 180px;
+}
+
+/* ---- Route transition veil ---- */
+
+.transition-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: #040806;
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ---- Footer ---- */
+
+.footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+  padding: 20px 0 28px;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.footer-dim {
+  color: var(--ink-faint);
+  letter-spacing: 0.18em;
+  font-size: 10px;
+}
+
+/* ---- Focus ---- */
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[role='slider']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---- Responsive ---- */
+
+@media (max-width: 600px) {
+  .masthead {
+    padding: 16px 0;
+  }
+
+  .nav-link {
+    padding: 8px 10px;
+  }
+}
+
+/* ---- Reduced motion ---- */
+
+@media (prefers-reduced-motion: reduce) {
+  .wordmark-cursor {
+    animation: none;
+  }
+
+  .modal-backdrop {
+    animation-duration: 0.01s;
+  }
+}
